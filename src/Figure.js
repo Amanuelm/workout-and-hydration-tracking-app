@@ -1,209 +1,166 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing } from 'react-native';
-import Svg, { G, Line, Circle } from 'react-native-svg';
+import Svg, { G, Line, Circle, Rect } from 'react-native-svg';
+import { frames as buildFrames, meta, gearPoints } from './rig';
 
+const ALine = Animated.createAnimatedComponent(Line);
+const ACircle = Animated.createAnimatedComponent(Circle);
 const AG = Animated.createAnimatedComponent(G);
 
-// One shared 0 -> 1 -> 0 driver per figure; every joint interpolates off it.
-function useRep(duration) {
+const N = 11;
+const INPUT = Array.from({ length: N }, (_, i) => i / (N - 1));
+
+// Pluck a nested joint, e.g. 'legN.knee'
+const at = (f, path) => path.split('.').reduce((o, k) => o[k], f);
+
+// Body segments: [from, to, strokeWidth, layer]
+const BODY = [
+  ['hip', 'legF.knee', 5.0, 'far'],
+  ['legF.knee', 'legF.ankle', 4.6, 'far'],
+  ['legF.ankle', 'legF.toe', 4.0, 'far'],
+  ['neck', 'armF.elbow', 4.6, 'far'],
+  ['armF.elbow', 'armF.hand', 4.2, 'far'],
+  ['hip', 'neck', 7.5, 'near'],
+  ['neck', 'head', 5.0, 'near'],
+  ['hip', 'legN.knee', 5.6, 'near'],
+  ['legN.knee', 'legN.ankle', 5.2, 'near'],
+  ['legN.ankle', 'legN.toe', 4.4, 'near'],
+  ['neck', 'armN.elbow', 5.2, 'near'],
+  ['armN.elbow', 'armN.hand', 4.8, 'near'],
+];
+
+function unwrap(series) {
+  const out = series.slice();
+  for (let i = 1; i < out.length; i++) {
+    while (out[i] - out[i - 1] > 180) out[i] -= 360;
+    while (out[i] - out[i - 1] < -180) out[i] += 360;
+  }
+  return out;
+}
+
+export default function Figure({
+  kind,
+  size = 64,
+  playing = true,
+  color = '#F2F3F7',
+  far = '#6B7384',
+  accent = '#FF5A1F',
+  line = '#2A2F3C',
+  showFloor = true,
+}) {
   const t = useRef(new Animated.Value(0)).current;
+  const { fr, m, gears } = useMemo(() => {
+    const f = buildFrames(kind, N);
+    const mm = meta(kind);
+    return { fr: f, m: mm, gears: f.map((x) => gearPoints(x, mm.gear)) };
+  }, [kind]);
+
   useEffect(() => {
+    t.stopAnimation();
+    if (!playing) { t.setValue(0.35); return; }
+    const half = m.ms;
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(t, { toValue: 1, duration, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
-        Animated.timing(t, { toValue: 0, duration, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+        Animated.timing(t, { toValue: 1, duration: half, easing: Easing.inOut(Easing.cubic), useNativeDriver: false }),
+        Animated.timing(t, { toValue: 0, duration: half, easing: Easing.inOut(Easing.cubic), useNativeDriver: false }),
       ])
     );
     loop.start();
     return () => loop.stop();
-  }, [t, duration]);
-  return t;
-}
-const to = (t, a, b) => t.interpolate({ inputRange: [0, 1], outputRange: [a, b] });
+  }, [t, playing, kind, m.ms]);
 
-export default function Figure({ kind, size = 62, color = '#ECEEF4', accent = '#7D9BFF', line = '#333848' }) {
-  const t = useRep(kind === 'roll' || kind === 'hinge' ? 1500 : 1200);
-  const S = { stroke: color, strokeWidth: 4.4, strokeLinecap: 'round' };
-  const K = { stroke: accent, strokeWidth: 5.4, strokeLinecap: 'round' };
-  const ground = <Line x1="12" y1="110" x2="108" y2="110" stroke={line} strokeWidth="2.5" />;
+  const chan = (get) => t.interpolate({ inputRange: INPUT, outputRange: fr.map(get) });
 
-  let body = null;
+  const seg = (from, to, w, layer, key) => (
+    <ALine
+      key={key}
+      x1={chan((f) => at(f, from)[0])}
+      y1={chan((f) => at(f, from)[1])}
+      x2={chan((f) => at(f, to)[0])}
+      y2={chan((f) => at(f, to)[1])}
+      stroke={layer === 'far' ? far : color}
+      strokeWidth={w}
+      strokeLinecap="round"
+    />
+  );
 
-  if (kind === 'squat') {
-    body = (
-      <AG translateY={to(t, 0, 11)}>
-        <AG rotation={to(t, 0, 26)} originX="58" originY="62">
-          <Circle cx="58" cy="24" r="8" fill={color} />
-          <Line x1="58" y1="32" x2="58" y2="62" {...S} />
-          <Line x1="58" y1="40" x2="48" y2="56" {...S} />
-          <Line x1="42" y1="50" x2="54" y2="62" {...K} />
-        </AG>
-        <AG rotation={to(t, 0, 52)} originX="58" originY="62">
-          <Line x1="58" y1="62" x2="58" y2="86" {...S} />
-          <AG rotation={to(t, 0, -52)} originX="58" originY="86">
-            <Line x1="58" y1="86" x2="58" y2="108" {...S} />
-            <Line x1="58" y1="108" x2="70" y2="108" {...S} />
+  const g0 = gears[0];
+  const equip = [];
+
+  if (g0?.type === 'db') {
+    g0.bars.forEach((_, i) => {
+      const rots = unwrap(gears.map((g) => g.bars[i].rot));
+      equip.push(
+        <AG
+          key={`db${i}`}
+          translateX={t.interpolate({ inputRange: INPUT, outputRange: gears.map((g) => g.bars[i].p[0]) })}
+          translateY={t.interpolate({ inputRange: INPUT, outputRange: gears.map((g) => g.bars[i].p[1]) })}
+        >
+          <AG rotation={t.interpolate({ inputRange: INPUT, outputRange: rots })}>
+            <Line x1={-7} y1={0} x2={7} y2={0} stroke={accent} strokeWidth={3.4} strokeLinecap="round" />
+            <Rect x={-11.5} y={-5} width={5.5} height={10} rx={2} fill={accent} />
+            <Rect x={6} y={-5} width={5.5} height={10} rx={2} fill={accent} />
           </AG>
         </AG>
-      </AG>
-    );
-  } else if (kind === 'hinge') {
-    body = (
-      <>
-        <AG rotation={to(t, 0, 72)} originX="58" originY="62">
-          <Circle cx="58" cy="24" r="8" fill={color} />
-          <Line x1="58" y1="32" x2="58" y2="62" {...S} />
-          <Line x1="58" y1="40" x2="58" y2="60" {...S} />
-          <Line x1="50" y1="60" x2="66" y2="60" {...K} />
-        </AG>
-        <AG rotation={to(t, 0, -14)} originX="58" originY="62">
-          <Line x1="58" y1="62" x2="58" y2="86" {...S} />
-          <Line x1="58" y1="86" x2="58" y2="108" {...S} />
-          <Line x1="58" y1="108" x2="70" y2="108" {...S} />
-        </AG>
-      </>
-    );
-  } else if (kind === 'press') {
-    body = (
-      <>
-        <Circle cx="24" cy="86" r="8" fill={color} />
-        <Line x1="32" y1="86" x2="74" y2="86" {...S} />
-        <Line x1="74" y1="86" x2="84" y2="72" {...S} />
-        <Line x1="84" y1="72" x2="94" y2="88" {...S} />
-        <Line x1="94" y1="88" x2="104" y2="88" {...S} />
-        <AG rotation={to(t, 0, -86)} originX="48" originY="86">
-          <Line x1="48" y1="86" x2="48" y2="62" {...S} />
-          <Line x1="40" y1="60" x2="56" y2="60" {...K} />
-        </AG>
-        <Line x1="12" y1="96" x2="108" y2="96" stroke={line} strokeWidth="2.5" />
-      </>
-    );
-  } else if (kind === 'row') {
-    body = (
-      <>
-        <Circle cx="34" cy="44" r="8" fill={color} />
-        <Line x1="42" y1="46" x2="76" y2="54" {...S} />
-        <Line x1="76" y1="54" x2="78" y2="80" {...S} />
-        <Line x1="78" y1="80" x2="74" y2="106" {...S} />
-        <Line x1="74" y1="106" x2="86" y2="106" {...S} />
-        <AG rotation={to(t, 0, 44)} originX="50" originY="48">
-          <Line x1="50" y1="48" x2="50" y2="78" {...S} />
-          <Line x1="42" y1="80" x2="58" y2="80" {...K} />
-        </AG>
-        {ground}
-      </>
-    );
-  } else if (kind === 'curl') {
-    body = (
-      <>
-        <Circle cx="58" cy="22" r="8" fill={color} />
-        <Line x1="58" y1="30" x2="58" y2="66" {...S} />
-        <Line x1="58" y1="66" x2="50" y2="108" {...S} />
-        <Line x1="58" y1="66" x2="68" y2="108" {...S} />
-        <Line x1="58" y1="36" x2="52" y2="56" {...S} />
-        <AG rotation={to(t, 0, -128)} originX="52" originY="56">
-          <Line x1="52" y1="56" x2="54" y2="76" {...S} />
-          <Line x1="46" y1="78" x2="62" y2="78" {...K} />
-        </AG>
-        {ground}
-      </>
-    );
-  } else if (kind === 'open') {
-    body = (
-      <>
-        <Circle cx="58" cy="22" r="8" fill={color} />
-        <Line x1="58" y1="30" x2="58" y2="66" {...S} />
-        <Line x1="58" y1="66" x2="50" y2="108" {...S} />
-        <Line x1="58" y1="66" x2="68" y2="108" {...S} />
-        <AG rotation={to(t, 0, -34)} originX="58" originY="38">
-          <Line x1="58" y1="38" x2="30" y2="46" {...S} />
-          <Circle cx="28" cy="46" r="4" fill={accent} />
-        </AG>
-        <AG rotation={to(t, 0, 34)} originX="58" originY="38">
-          <Line x1="58" y1="38" x2="86" y2="46" {...S} />
-          <Circle cx="88" cy="46" r="4" fill={accent} />
-        </AG>
-        {ground}
-      </>
-    );
-  } else if (kind === 'roll') {
-    body = (
-      <>
-        <AG translateX={to(t, 0, 20)} translateY={to(t, 0, 8)}>
-          <Circle cx="34" cy="62" r="8" fill={color} />
-          <Line x1="40" y1="66" x2="62" y2="86" {...S} />
-          <Line x1="62" y1="86" x2="76" y2="104" {...S} />
-          <Line x1="76" y1="104" x2="88" y2="104" {...S} />
-          <Line x1="38" y1="68" x2="30" y2="92" {...S} />
-          <Circle cx="26" cy="98" r="9" stroke={accent} strokeWidth="5.4" fill="none" />
-        </AG>
-        {ground}
-      </>
-    );
-  } else if (kind === 'plank') {
-    body = (
-      <>
-        <AG translateY={to(t, 0, 2)}>
-          <Circle cx="26" cy="72" r="8" fill={color} />
-          <Line x1="34" y1="74" x2="86" y2="88" {...S} />
-          <Line x1="86" y1="88" x2="96" y2="104" {...S} />
-          <Line x1="96" y1="104" x2="106" y2="104" {...S} />
-          <Line x1="40" y1="76" x2="36" y2="104" {...S} />
-          <Line x1="36" y1="104" x2="48" y2="104" {...S} />
-        </AG>
-        {ground}
-      </>
-    );
-  } else if (kind === 'calf') {
-    body = (
-      <>
-        <AG translateY={to(t, 0, -9)}>
-          <Circle cx="58" cy="22" r="8" fill={color} />
-          <Line x1="58" y1="30" x2="58" y2="66" {...S} />
-          <Line x1="58" y1="36" x2="48" y2="60" {...S} />
-          <Line x1="42" y1="62" x2="54" y2="62" {...K} />
-          <Line x1="58" y1="66" x2="56" y2="104" {...S} />
-          <Line x1="56" y1="104" x2="68" y2="106" {...S} />
-        </AG>
-        {ground}
-      </>
-    );
-  } else if (kind === 'thrust') {
-    body = (
-      <>
-        <AG translateY={to(t, 6, -4)}>
-          <Circle cx="24" cy="74" r="8" fill={color} />
-          <Line x1="32" y1="76" x2="62" y2="80" {...S} />
-          <Line x1="56" y1="70" x2="70" y2="70" {...K} />
-          <Line x1="62" y1="80" x2="80" y2="88" {...S} />
-        </AG>
-        <Line x1="80" y1="88" x2="84" y2="106" {...S} />
-        <Line x1="84" y1="106" x2="96" y2="106" {...S} />
-        {ground}
-      </>
-    );
-  } else {
-    // cardio
-    body = (
-      <>
-        <AG translateY={to(t, 0, -9)}>
-          <Circle cx="62" cy="24" r="8" fill={color} />
-          <Line x1="62" y1="32" x2="56" y2="62" {...S} />
-          <Line x1="60" y1="40" x2="78" y2="48" {...S} />
-          <Line x1="60" y1="42" x2="40" y2="34" {...S} />
-          <Line x1="56" y1="62" x2="72" y2="84" {...S} />
-          <Line x1="72" y1="84" x2="70" y2="106" {...S} />
-          <Line x1="56" y1="62" x2="40" y2="80" {...S} />
-          <Line x1="40" y1="80" x2="46" y2="96" {...S} />
-        </AG>
-        {ground}
-      </>
-    );
+      );
+    });
+  }
+
+  const bandSeg = (key, getA, getB, op = 1) => (
+    <ALine
+      key={key}
+      x1={t.interpolate({ inputRange: INPUT, outputRange: gears.map((g) => getA(g)[0]) })}
+      y1={t.interpolate({ inputRange: INPUT, outputRange: gears.map((g) => getA(g)[1]) })}
+      x2={t.interpolate({ inputRange: INPUT, outputRange: gears.map((g) => getB(g)[0]) })}
+      y2={t.interpolate({ inputRange: INPUT, outputRange: gears.map((g) => getB(g)[1]) })}
+      stroke={accent}
+      strokeWidth={3}
+      strokeLinecap="round"
+      opacity={op}
+    />
+  );
+
+  const band = [];
+  if (g0?.type === 'band') {
+    if (g0.c && g0.d) {
+      band.push(bandSeg('b1', (g) => g.a, (g) => g.b));
+      band.push(bandSeg('b2', (g) => g.c, (g) => g.d, 0.55));
+    } else if (g0.c) {
+      band.push(bandSeg('b1', (g) => g.a, (g) => g.b));
+      band.push(bandSeg('b2', (g) => g.b, (g) => g.c, 0.55));
+    } else {
+      band.push(bandSeg('b1', (g) => g.a, (g) => g.b));
+    }
   }
 
   return (
     <Svg width={size} height={size} viewBox="0 0 120 120">
-      {body}
+      {m.prop?.type === 'mat' && <Rect x={6} y={104} width={108} height={7} rx={3.5} fill={line} />}
+      {m.prop?.type === 'box' && (
+        <Rect x={m.prop.x} y={m.prop.y} width={m.prop.w} height={m.prop.h} rx={3} fill={line} />
+      )}
+      {showFloor && <Line x1={4} y1={110} x2={116} y2={110} stroke={line} strokeWidth={2.5} strokeLinecap="round" />}
+
+      {BODY.filter((s) => s[3] === 'far').map((s, i) => seg(s[0], s[1], s[2], s[3], `f${i}`))}
+      {g0?.type === 'band' && g0.behind ? band : null}
+      <ACircle
+        cx={chan((f) => f.head[0])}
+        cy={chan((f) => f.head[1])}
+        r={7}
+        fill={color}
+      />
+      {BODY.filter((s) => s[3] === 'near').map((s, i) => seg(s[0], s[1], s[2], s[3], `n${i}`))}
+      {g0?.type === 'band' && !g0.behind ? band : null}
+      {g0?.type === 'roller' && (
+        <AG
+          translateX={t.interpolate({ inputRange: INPUT, outputRange: gears.map((g) => g.p[0]) })}
+          translateY={t.interpolate({ inputRange: INPUT, outputRange: gears.map((g) => g.p[1] + 4) })}
+        >
+          <Circle cx={0} cy={0} r={7.5} fill="none" stroke={accent} strokeWidth={3.4} />
+          <Line x1={-9} y1={0} x2={9} y2={0} stroke={accent} strokeWidth={2.6} strokeLinecap="round" />
+        </AG>
+      )}
+      {g0?.type === 'db' ? equip : null}
     </Svg>
   );
 }

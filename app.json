@@ -6,6 +6,12 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
+    "backgroundColor": "#0B0D13",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0D13"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.ironroom.app"
@@ -13,7 +19,7 @@
     "android": {
       "package": "com.ironroom.app",
       "adaptiveIcon": {
-        "backgroundColor": "#101219",
+        "backgroundColor": "#0B0D13",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -28,7 +34,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-notifications"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#FF5A1F"
+        }
+      ]
     ],
     "extra": {
       "eas": {

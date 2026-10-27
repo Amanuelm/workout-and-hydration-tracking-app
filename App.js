@@ -11,6 +11,8 @@ import Figure from './src/Figure';
 import Player from './src/Player';
 import { load, persist, todayKey, dateKey, DEFAULTS } from './src/store';
 import * as notify from './src/notify';
+import { DueToday, HabitManager, MeasureEntry } from './src/Habits';
+import { exportWorkbook } from './src/exporter';
 
 const { width: SW } = Dimensions.get('window');
 
@@ -21,6 +23,7 @@ export default function App() {
   const [sel, setSel] = useState(DAY_TO_PROGRAM[new Date().getDay()]);
   const [playing, setPlaying] = useState(false);
   const [rest, setRest] = useState(null);
+  const [measuring, setMeasuring] = useState(null);
   const timer = useRef(null);
 
   useEffect(() => {
@@ -96,6 +99,24 @@ export default function App() {
   const addWater = (ml) =>
     update((p) => ({ ...p, water: { ...p.water, [todayKey()]: Math.max(0, (p.water[todayKey()] || 0) + ml) } }));
 
+  const toggleHabit = (id) => {
+    const k = `${id}|${todayKey()}`;
+    update((p) => {
+      const log = { ...p.habitLog };
+      if (log[k]) delete log[k]; else log[k] = true;
+      return { ...p, habitLog: log };
+    });
+  };
+  const saveMeasure = (id, value) => {
+    const k = `${id}|${todayKey()}`;
+    update((p) => {
+      const log = { ...p.habitLog };
+      if (value === null) delete log[k]; else log[k] = value;
+      return { ...p, habitLog: log };
+    });
+    setMeasuring(null);
+  };
+
   const session = PROGRAM[sel];
 
   if (playing && !session.rest) {
@@ -129,6 +150,8 @@ export default function App() {
               setsDone={setsDone} onStart={() => setPlaying(true)}
               addWater={addWater} waterToday={waterToday}
               onTheme={() => update({ theme: c === dark ? 'light' : 'dark' })}
+              onCheckHabit={toggleHabit}
+              onMeasureHabit={(h) => setMeasuring(h)}
             />
           )}
           {tab === 'water' && <Water c={c} state={state} addWater={addWater} waterToday={waterToday} />}
@@ -136,6 +159,16 @@ export default function App() {
           {tab === 'settings' && <Settings c={c} state={state} update={update} />}
         </ScrollView>
       </SafeAreaView>
+
+      {measuring && (
+        <MeasureEntry
+          c={c}
+          habit={measuring}
+          current={state.habitLog[`${measuring.id}|${todayKey()}`] ?? null}
+          onSave={(v) => saveMeasure(measuring.id, v)}
+          onClose={() => setMeasuring(null)}
+        />
+      )}
 
       <View style={{
         position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row',
@@ -165,7 +198,7 @@ function TabIcon({ k, color }) {
 }
 
 /* ================= HOME ================= */
-function Home({ c, state, sel, setSel, session, setsDone, onStart, addWater, waterToday, onTheme }) {
+function Home({ c, state, sel, setSel, session, setsDone, onStart, addWater, waterToday, onTheme, onCheckHabit, onMeasureHabit }) {
   const isToday = sel === DAY_TO_PROGRAM[new Date().getDay()];
   const total = session.ex.reduce((a, e) => a + e.s, 0);
   const done = session.ex.reduce((a, e, i) => a + Math.min(setsDone(sel, i), e.s), 0);
@@ -288,6 +321,8 @@ function Home({ c, state, sel, setSel, session, setsDone, onStart, addWater, wat
           <Text style={[T.small, { color: c.fg, fontWeight: '800' }]}>+{state.glass}</Text>
         </View>
       </Pressable>
+
+      <DueToday c={c} state={state} onCheck={onCheckHabit} onMeasure={onMeasureHabit} />
 
       <View style={{ backgroundColor: c.surface, borderRadius: R.lg, padding: 16, borderWidth: 1, borderColor: c.warn + '55' }}>
         <Text style={[T.small, { color: c.muted }]}>
@@ -418,6 +453,8 @@ function Progress({ c, state }) {
 
 /* ================= SETTINGS ================= */
 function Settings({ c, state, update }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
   const commit = (patch) => { update(patch); notify.reschedule({ ...state, ...patch }); };
   const num = (v, fb) => { const n = parseInt(String(v).replace(/[^0-9]/g, ''), 10); return Number.isFinite(n) ? n : fb; };
   const Row = ({ label, children }) => (
@@ -478,6 +515,8 @@ function Settings({ c, state, update }) {
         </Text>
       </Card>
 
+      <HabitManager c={c} state={state} update={update} reschedule={notify.reschedule} />
+
       <Card title="HYDRATION">
         <Row label="Daily goal (ml)">
           <Input defaultValue={String(state.goal)}
@@ -508,6 +547,32 @@ function Settings({ c, state, update }) {
           2 × 12kg dumbbells · 2 × 6kg dumbbells · ab roller · resistance band · mat.
           Every exercise in the program uses only these.
         </Text>
+      </Card>
+
+      <Card title="EXPORT">
+        <Text style={[T.body, { color: c.muted, marginTop: 8, marginBottom: 14 }]}>
+          One Excel workbook with four sheets: every set you have logged, daily water,
+          ticked-off reminders, and your measurements over time.
+        </Text>
+        <Pressable
+          onPress={async () => {
+            setBusy(true);
+            try {
+              const r = await exportWorkbook(state);
+              setNote(r.ok ? 'Workbook ready' : r.reason);
+            } catch (e) {
+              setNote("Couldn't build the file. Try again.");
+            }
+            setBusy(false);
+            setTimeout(() => setNote(null), 3500);
+          }}
+          disabled={busy}
+          style={{ backgroundColor: c.accent, borderRadius: R.md, paddingVertical: 15, alignItems: 'center' }}>
+          <Text style={[T.h3, { color: c.onAccent }]}>
+            {busy ? 'Building…' : 'Export to Excel'}
+          </Text>
+        </Pressable>
+        {!!note && <Text style={[T.small, { color: c.muted, marginTop: 10, textAlign: 'center' }]}>{note}</Text>}
       </Card>
 
       <Card title="DATA">

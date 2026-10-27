@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Iron Room",
+    "slug": "ironroom",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ironroom.app"
+    },
+    "android": {
+      "package": "com.ironroom.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#101219",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "SCHEDULE_EXACT_ALARM",
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-notifications"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "b896809d-280c-4a0e-9ff9-3fbb8a5ebe1d"
+      }
+    }
+  }
+}
